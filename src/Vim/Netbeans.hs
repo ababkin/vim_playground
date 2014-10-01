@@ -3,6 +3,7 @@
 module Vim.Netbeans
 ( Netbeans
 , runNetbeans
+, runForkedNetbeans
 , NetbeansCallbacks(..)
 , P.Event(..)
 , P.BufId
@@ -114,10 +115,18 @@ runNetbeans :: (Error e, MonadIO m, MonadError e m)
     => PortID -- ^ Port
     -> String -- ^ Expected password
     -> NetbeansCallbacks (m ()) -- ^ functions invoked during stages of life cycle
-    -> Netbeans IO () -- ^ Monad to fork
     -> Netbeans m () -- ^ Monad to run
     -> m () -- ^ Internal monad
-runNetbeans port password callbacks (Netbeans forkedCallback) (Netbeans runCallback) = do
+runNetbeans port password callbacks = runForkedNetbeans port password callbacks []
+
+runForkedNetbeans :: (Error e, MonadIO m, MonadError e m)
+    => PortID -- ^ Port
+    -> String -- ^ Expected password
+    -> NetbeansCallbacks (m ()) -- ^ functions invoked during stages of life cycle
+    -> [Netbeans IO ()] -- ^ Monads to fork
+    -> Netbeans m () -- ^ Monad to run
+    -> m () -- ^ Internal monad
+runForkedNetbeans port password callbacks forkedCallbacks (Netbeans runCallback) = do
     s <- liftIO $ listenOn port
     preAccept callbacks
     (handleC, hostC, portC) <- liftIO $ accept s
@@ -149,15 +158,11 @@ runNetbeans port password callbacks (Netbeans forkedCallback) (Netbeans runCallb
                 q
                 pm)
 
-    liftIO $ forkIO $ runReaderT forkedCallback env
-    {- runReaderT forkedCallback env -}
+    liftIO $ forM_ forkedCallbacks $ \forkedCallback -> 
+      forkIO $ runReaderT (unNetbeans forkedCallback) env
 
     runReaderT runCallback env
     return ()
-
-    {- where -}
-      {- forked :: MonadIO m => ReaderT ConnState m a -> ConnState -> m a -}
-      {- forked =  -}
 
 pollVersion :: TChan P.VimMessage -> IO String
 pollVersion q = do
