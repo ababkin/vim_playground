@@ -1,3 +1,5 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Vim.Netbeans
 ( Netbeans
 , runNetbeans
@@ -54,27 +56,34 @@ module Vim.Netbeans
 )
 where
 
-import GHC.IO.Handle (Handle, hClose, hSetBinaryMode, hPutStr, hFlush)
-import Control.Monad.Trans (liftIO, lift, MonadTrans)
-import Control.Monad (liftM, forever, forM_)
-import Control.Monad.Reader (ReaderT(..), MonadReader(..))
-import Network (listenOn, accept, PortID)
-import System.IO (hGetContents, hPutStrLn, stderr)
-import Control.Monad.Error (ErrorT, runErrorT, MonadError(..), Error(..))
-import Control.Monad.IO.Class (MonadIO)
+import           Control.Monad                      (forM_, forever, liftM)
+import           Control.Monad.Error                (Error (..), ErrorT,
+                                                     MonadError (..), runErrorT)
+import           Control.Monad.IO.Class             (MonadIO)
+import           Control.Monad.Reader               (MonadReader (..),
+                                                     ReaderT (..))
+import           Control.Monad.Trans                (MonadTrans, lift, liftIO)
+import           GHC.IO.Handle                      (Handle, hClose, hFlush,
+                                                     hPutStr, hSetBinaryMode)
+import           Network                            (PortID, accept, listenOn)
+import           System.IO                          (hGetContents, hPutStrLn,
+                                                     stderr)
 
-import Data.List (isPrefixOf, find, delete)
-import Text.ParserCombinators.Parsec
-import Text.ParserCombinators.Parsec.Char
+import           Data.List                          (delete, find, isPrefixOf)
+import           Text.ParserCombinators.Parsec
+import           Text.ParserCombinators.Parsec.Char
 
-import Control.Applicative ((<$>), Applicative(..))
-import Control.Concurrent.STM.TChan (TChan, newTChan, readTChan, writeTChan,
-                                     dupTChan, isEmptyTChan, tryReadTChan)
-import Control.Monad.STM (atomically)
-import Control.Concurrent.MVar (putMVar, takeMVar, MVar, newMVar, withMVar)
-import Control.Concurrent (forkIO)
+import           Control.Applicative                (Applicative (..), (<$>))
+import           Control.Concurrent                 (forkIO)
+import           Control.Concurrent.MVar            (MVar, newMVar, putMVar,
+                                                     takeMVar, withMVar)
+import           Control.Concurrent.STM.TChan       (TChan, dupTChan,
+                                                     isEmptyTChan, newTChan,
+                                                     readTChan, tryReadTChan,
+                                                     writeTChan)
+import           Control.Monad.STM                  (atomically)
 
-import qualified Vim.Netbeans.Protocol as P
+import qualified Vim.Netbeans.Protocol              as P
 
 newtype Netbeans m a = Netbeans { unNetbeans :: ReaderT ConnState m a }
                                 deriving ( Monad
@@ -97,7 +106,7 @@ data ConnState = ConnState
     }
 
 data NetbeansCallbacks m = NetbeansCallbacks
-                         { preAccept :: m
+                         { preAccept       :: m
                          , initMsgReceived :: P.Event -> m
                          }
 
@@ -105,9 +114,10 @@ runNetbeans :: (Error e, MonadIO m, MonadError e m)
     => PortID -- ^ Port
     -> String -- ^ Expected password
     -> NetbeansCallbacks (m ()) -- ^ functions invoked during stages of life cycle
+    -> Netbeans IO () -- ^ Monad to fork
     -> Netbeans m () -- ^ Monad to run
     -> m () -- ^ Internal monad
-runNetbeans port password callbacks (Netbeans vm) = do
+runNetbeans port password callbacks (Netbeans forkedCallback) (Netbeans runCallback) = do
     s <- liftIO $ listenOn port
     preAccept callbacks
     (handleC, hostC, portC) <- liftIO $ accept s
@@ -129,16 +139,25 @@ runNetbeans port password callbacks (Netbeans vm) = do
     P.EventMessage _ _ P.StartupDone <- liftIO $ atomically $ readTChan q
     initMsgReceived callbacks P.StartupDone
 -- end preflight
-    runReaderT vm (ConnState
-                        seqCounter
-                        hMVar
-                        bufMVar
-                        annoTypeMVar
-                        annoMVar
-                        version
-                        q
-                        pm)
+    let env = (ConnState
+                seqCounter
+                hMVar
+                bufMVar
+                annoTypeMVar
+                annoMVar
+                version
+                q
+                pm)
+
+    liftIO $ forkIO $ runReaderT forkedCallback env
+    {- runReaderT forkedCallback env -}
+
+    runReaderT runCallback env
     return ()
+
+    {- where -}
+      {- forked :: MonadIO m => ReaderT ConnState m a -> ConnState -> m a -}
+      {- forked =  -}
 
 pollVersion :: TChan P.VimMessage -> IO String
 pollVersion q = do
@@ -619,7 +638,7 @@ getModified = do
     return count
 
 {- | Return zero if the buffer does not have changes,
-one if it does have changes.  
+one if it does have changes.
 
 New in protocol version 2.1.
 -}
