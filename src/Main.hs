@@ -25,8 +25,9 @@ import           Types                   (API (..), Action (..))
 
 #ifdef __HASTE__
 
-nb = undefined
-openedFile = undefined
+nb            = undefined
+openedFile    = undefined
+invokeAction  = undefined
 
 #else
 

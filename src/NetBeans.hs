@@ -50,9 +50,14 @@ netBeans incoming outgoing = runNetbeans
         case ne of
             (_, Disconnect) -> return ()
             (_, e) -> do
-                liftIO $ putStrLn $ "printing event " ++ (show e)
-                liftIO $ putMVar incoming $ show e
-                handleIncoming incoming
+              case e of
+                FileOpened filename _ _ -> do
+                  liftIO $ putStrLn $ "FileOpened filename: " ++ filename
+                  liftIO $ putMVar incoming filename
+                  handleIncoming incoming
+                _ -> do
+                  liftIO $ putStrLn $ "unknown event " ++ (show e)
+                  handleIncoming incoming
 
       handleOutgoing :: MVar Action -> Netbeans IO ()
       handleOutgoing outgoing = do
